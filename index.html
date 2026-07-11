@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <title>Insider & Politician Scanner</title>
+  <meta name="theme-color" content="#0A0D13" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Scanner" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Pull-to-refresh indicator -->
+  <div id="ptr" class="ptr"><span class="ptr-dot"></span></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="radar" id="radar" aria-hidden="true"><span class="sweep"></span></span>
+      <div class="brand-text">
+        <h1>SCANNER</h1>
+        <p id="statusline" class="statusline">Loading…</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div class="segmented" id="sourceSeg" role="tablist" aria-label="Signal source">
+      <button class="seg active" data-source="all" role="tab">All</button>
+      <button class="seg" data-source="insider" role="tab"><i class="dot dot-insider"></i>Insider</button>
+      <button class="seg" data-source="congress" role="tab"><i class="dot dot-congress"></i>Congress</button>
+    </div>
+
+    <div class="score-row">
+      <label for="scoreRange">Min signal <b id="scoreVal">50</b></label>
+      <input id="scoreRange" type="range" min="0" max="100" step="5" value="50" />
+    </div>
+
+    <div class="search-row">
+      <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 104.47 10.03l4.25 4.25 1.41-1.41-4.25-4.25A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z"/></svg>
+      <input id="tickerInput" type="text" inputmode="latin" autocapitalize="characters"
+             autocomplete="off" spellcheck="false" placeholder="Filter by ticker" />
+      <button id="tickerClear" class="ticker-clear" aria-label="Clear ticker filter" hidden>×</button>
+    </div>
+  </div>
+
+  <main id="list" class="list" aria-live="polite">
+    <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+  </main>
+
+  <button id="scanFab" class="fab" aria-label="Run scan now">
+    <svg class="fab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 108 8h-2a6 6 0 11-6-6V4z"/></svg>
+    <span class="fab-label">Run scan</span>
+  </button>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+requests>=2.31
+streamlit>=1.35
+pandas>=2.0
+
+# Mobile app backend (api.py). fastapi serves the JSON API + the installable PWA;
+# uvicorn is the ASGI server that runs it. Justified new deps: the phone app needs
+# an HTTP/JSON layer in front of scanner.py that Streamlit can't provide.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# Web Push notifications (push.py). Sends alerts to the phone even when the app is
+# closed. Optional at runtime — the scanner runs fine without VAPID keys set.
+pywebpush>=1.14

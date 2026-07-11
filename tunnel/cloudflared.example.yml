@@ -1,0 +1,18 @@
+# Copy this to  tunnel/cloudflared.yml  and fill in the three placeholders.
+# Used by ./tunnel/run-named.sh in "config mode". See TUNNEL.md for how to get
+# the tunnel name/UUID and credentials file (cloudflared tunnel create scanner).
+
+# The tunnel's name or UUID (from `cloudflared tunnel create scanner`)
+tunnel: scanner
+
+# Absolute path to the credentials JSON that `cloudflared tunnel create` wrote,
+# e.g. /home/you/.cloudflared/6ff42ae2-....json  (on Windows, a full C:\ path)
+credentials-file: /home/YOU/.cloudflared/REPLACE-WITH-TUNNEL-UUID.json
+
+ingress:
+  # Your stable hostname on a domain you've added to Cloudflare. Route it once with:
+  #   cloudflared tunnel route dns scanner scanner.yourdomain.com
+  - hostname: scanner.yourdomain.com
+    service: http://localhost:8000
+  # Required catch-all — cloudflared refuses to start without it.
+  - service: http_status:404

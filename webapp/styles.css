@@ -1,0 +1,285 @@
+/* ============================================================
+   Insider / Politician Scanner — mobile app styles
+   Identity: a trading-terminal / signal-scanner instrument.
+   Signature: the segmented "signal strength" meter + radar sweep.
+   ============================================================ */
+
+:root {
+  --bg: #0A0E16;
+  --bg-grid: #0F1420;
+  --surface: #131A27;
+  --surface-2: #1A2239;
+  --line: #24303E;
+  --line-soft: #1C2738;
+
+  --text: #E8EDF5;
+  --muted: #8B97A8;
+  --muted-2: #5E6D81;
+
+  --insider: #F59E1B;   /* amber — warmer for insiders */
+  --congress: #06B6D4;  /* cyan — congressional */
+
+  --hot: #EF4444;
+  --warm: #F59E1B;
+  --cool: #06B6D4;
+  --dim: #3F4A5E;
+
+  --radius: 16px;
+  --tap: 44px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: contain;
+}
+
+body {
+  /* faint scanner grid — reads as an instrument, not a plain app */
+  background-image:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px;
+  min-height: 100vh;
+  padding-bottom: calc(96px + var(--safe-bottom));
+}
+
+/* ---------- Top bar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  padding: calc(14px + var(--safe-top)) 18px 12px;
+  background: linear-gradient(180deg, rgba(10,13,19,0.96) 70%, rgba(10,13,19,0));
+  backdrop-filter: blur(10px);
+}
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+
+.alerts-btn {
+  flex: none; width: 42px; height: 42px; border-radius: 13px;
+  background: rgba(20,26,37,0.6); border: 1px solid var(--line); color: var(--muted);
+  display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.alerts-btn:active { transform: scale(0.92); }
+.alerts-btn:hover { background: rgba(20,26,37,0.8); }
+.alerts-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.alerts-btn.on { 
+  color: var(--congress); 
+  background: rgba(6,182,212,0.12);
+  border-color: rgba(6,182,212,0.4);
+  box-shadow: 0 0 12px rgba(6,182,212,0.2);
+}
+.alerts-btn.pending { opacity: 0.6; }
+.brand-text h1 {
+  margin: 0; font-size: 16px; letter-spacing: 0.24em; font-weight: 700;
+  font-family: var(--mono); line-height: 1.2;
+}
+.brand-text h2 {
+  margin: 0; font-size: 14px; letter-spacing: 0.28em; font-weight: 700;
+  font-family: var(--mono); line-height: 1; color: var(--congress);
+}
+.statusline { margin: 3px 0 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* radar sweep — the app's signature motion */
+.radar {
+  position: relative; width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle, rgba(53,208,224,0.10) 0%, transparent 60%);
+  overflow: hidden; flex: none;
+}
+.radar::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background:
+    radial-gradient(circle, transparent 0 6px, var(--line-soft) 6px 7px, transparent 7px),
+    linear-gradient(var(--line-soft), var(--line-soft)) center/1px 100% no-repeat,
+    linear-gradient(90deg, var(--line-soft), var(--line-soft)) center/100% 1px no-repeat;
+  opacity: 0.7;
+}
+.sweep {
+  position: absolute; inset: -1px; border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg, rgba(53,208,224,0.55) 40deg, transparent 60deg);
+  animation: sweep 3.4s linear infinite;
+}
+.radar.scanning .sweep { animation-duration: 0.9s; }
+.radar.scanning { border-color: var(--congress); }
+@keyframes sweep { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sweep { animation: none; opacity: 0.4; } }
+
+/* ---------- Controls ---------- */
+.controls {
+  position: sticky; top: calc(66px + var(--safe-top)); z-index: 15;
+  padding: 4px 14px 12px;
+  background: linear-gradient(180deg, rgba(10,13,19,0.96) 80%, rgba(10,13,19,0));
+  backdrop-filter: blur(10px);
+  display: grid; gap: 11px;
+}
+
+.segmented {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  background: linear-gradient(135deg, rgba(20,26,37,0.8), rgba(26,34,49,0.8));
+  border: 1px solid var(--line); border-radius: 14px; padding: 5px;
+  backdrop-filter: blur(8px);
+}
+.seg {
+  min-height: 40px; border: 0; border-radius: 10px; background: transparent;
+  color: var(--muted); font-size: 13px; font-weight: 600; font-family: var(--font);
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.seg:active { transform: scale(0.98); }
+.seg.active { 
+  background: linear-gradient(135deg, rgba(53,208,224,0.15), rgba(53,208,224,0.08));
+  color: var(--congress); 
+  box-shadow: 0 0 12px rgba(53,208,224,0.2) inset, 0 1px 3px rgba(0,0,0,0.1) inset;
+  border: 1px solid rgba(53,208,224,0.3);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot-insider { background: var(--insider); box-shadow: 0 0 8px rgba(245,178,61,0.6); }
+.dot-congress { background: var(--congress); box-shadow: 0 0 8px rgba(53,208,224,0.6); }
+
+.score-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px; padding: 0 2px; }
+.score-row label { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.score-row label b { color: var(--text); font-family: var(--mono); font-size: 14px; }
+input[type="range"] {
+  -webkit-appearance: none; appearance: none; height: 5px; border-radius: 8px;
+  background: linear-gradient(90deg, rgba(79,195,214,0.4), rgba(245,178,61,0.4), rgba(255,93,82,0.4));
+  outline: none; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.2) inset;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--congress), var(--warm));
+  border: 2px solid var(--bg); box-shadow: 0 2px 6px rgba(53,208,224,0.4), 0 0 0 1px var(--line);
+  cursor: pointer; transition: all 0.2s;
+}
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.15);
+  box-shadow: 0 4px 12px rgba(53,208,224,0.6), 0 0 0 1px var(--line);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--congress), var(--warm));
+  border: 2px solid var(--bg); box-shadow: 0 2px 6px rgba(53,208,224,0.4), 0 0 0 1px var(--line);
+  cursor: pointer;
+}
+
+.search-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 0 12px; min-height: var(--tap);
+}
+.search-ico { width: 18px; height: 18px; fill: var(--muted-2); flex: none; }
+#tickerInput {
+  flex: 1; border: 0; background: transparent; color: var(--text);
+  font-family: var(--mono); font-size: 15px; letter-spacing: 0.05em; padding: 12px 0;
+  outline: none; text-transform: uppercase;
+}
+#tickerInput::placeholder { color: var(--muted-2); text-transform: none; letter-spacing: normal; font-family: var(--font); }
+.ticker-clear { border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 4px; }
+
+/* ---------- List ---------- */
+.list { padding: 4px 14px 0; display: grid; gap: 10px; }
+
+.card {
+  background: linear-gradient(135deg, var(--surface) 0%, color-mix(in srgb, var(--surface) 95%, var(--congress) 5%) 100%);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 16px;
+  position: relative; overflow: hidden;
+  animation: rise 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.card:hover { 
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border-color: color-mix(in srgb, var(--line) 60%, var(--accent, var(--text)) 40%);
+}
+.card::before { /* left accent rail = source at a glance */
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--accent, var(--muted-2));
+}
+.card.insider { --accent: var(--insider); }
+.card.congress { --accent: var(--congress); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 2px; }
+.ticker { font-family: var(--mono); font-size: 18px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.ticker .none { color: var(--muted-2); font-size: 13px; font-weight: 500; }
+.score-num { font-family: var(--mono); font-size: 24px; font-weight: 700; line-height: 1; text-align: right; }
+.score-cap { font-size: 9px; color: var(--muted-2); letter-spacing: 0.18em; text-align: right; margin-top: 3px; text-transform: uppercase; }
+
+/* signature: segmented signal-strength meter */
+.meter { display: flex; gap: 3px; margin: 10px 0 12px; }
+.meter i { flex: 1; height: 6px; border-radius: 2px; background: var(--line-soft); transition: background 0.2s; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tag {
+  font-size: 11px; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); background: var(--bg-grid);
+  letter-spacing: 0.02em;
+}
+.tag.src { color: var(--accent, var(--muted)); border-color: color-mix(in srgb, var(--accent, var(--muted)) 40%, var(--line)); }
+
+.who { font-size: 14px; color: var(--text); }
+.who .role { color: var(--muted); }
+.meta { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meta b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+.meta .buy { color: #63d68c; }
+
+.reasons { margin-top: 10px; font-size: 12px; color: var(--muted-2); line-height: 1.5; border-top: 1px dashed var(--line-soft); padding-top: 8px; }
+.card a.filing { color: var(--congress); font-size: 12px; text-decoration: none; }
+.card a.filing:after { content: " ↗"; }
+
+/* ---------- Empty / skeleton / toast ---------- */
+.skeleton { height: 128px; border-radius: var(--radius); background:
+  linear-gradient(100deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
+  background-size: 200% 100%; animation: shimmer 1.3s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+.empty { text-align: center; padding: 60px 24px; color: var(--muted); }
+.empty h2 { color: var(--text); font-size: 16px; margin: 0 0 6px; font-weight: 600; }
+.empty p { margin: 0 0 18px; font-size: 14px; line-height: 1.6; }
+.empty button { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px 20px; font-size: 14px; font-weight: 600; }
+
+.disclaimer { margin: 18px 4px 0; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted-2); font-size: 11.5px; line-height: 1.6; }
+
+/* ---------- FAB ---------- */
+.fab {
+  position: fixed; right: 18px; bottom: calc(20px + var(--safe-bottom)); z-index: 30;
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(135deg, var(--congress), rgb(41, 184, 198));
+  color: #051b22; border: 0; padding: 0 22px; height: 54px; border-radius: 27px;
+  font-weight: 700; font-size: 15px; box-shadow: 0 6px 20px rgba(53,208,224,0.35), 0 2px 8px rgba(0,0,0,0.25);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.fab:active { transform: scale(0.92); box-shadow: 0 2px 8px rgba(53,208,224,0.25); }
+.fab:hover { box-shadow: 0 8px 28px rgba(53,208,224,0.4), 0 2px 8px rgba(0,0,0,0.3); }
+.fab.busy { opacity: 0.8; }
+.fab-ico { width: 20px; height: 20px; fill: currentColor; }
+.fab.busy .fab-ico { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Pull to refresh ---------- */
+.ptr { position: fixed; top: calc(6px + var(--safe-top)); left: 0; right: 0; display: flex; justify-content: center; z-index: 5; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.ptr.show { opacity: 1; }
+.ptr-dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--congress); animation: spin 0.8s linear infinite; }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: calc(86px + var(--safe-bottom)); transform: translateX(-50%) translateY(20px);
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
+  padding: 11px 18px; border-radius: 12px; font-size: 13.5px; z-index: 40;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s; max-width: 90vw; text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

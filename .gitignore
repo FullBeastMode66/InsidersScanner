@@ -1,0 +1,18 @@
+# Local scanner database
+scanner.db
+scanner.db-journal
+scanner.db-wal
+
+# Secrets / local config
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
