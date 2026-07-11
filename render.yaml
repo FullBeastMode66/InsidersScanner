@@ -8,12 +8,19 @@ services:
   - type: web
     name: insiders-scanner
     runtime: docker
-    region: oregon  # change to your preferred region
-    
-    # Health check
+    region: oregon
     healthCheckPath: /api/health
-    healthCheckInterval: 30
-    
+    autoDeploy: true
+    disk:
+      name: scanner-db
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SCANNER_MIN_SCORE
+        value: "50"
+      - key: SCANNER_INTERVAL
+        value: "300"
+        
     # Environment variables (set these in the Render dashboard, or here if public)
     envVars:
       - key: SCANNER_MIN_SCORE
