@@ -1,9 +1,3 @@
-# Render.com deployment config for the Insiders Scanner
-# Save as render.yaml in the repo root, then connect your repo to Render via dashboard:
-# https://dashboard.render.com/blueprints
-#
-# Render will automatically deploy when you push to your repo.
-
 services:
   - type: web
     name: insiders-scanner
@@ -20,31 +14,3 @@ services:
         value: "50"
       - key: SCANNER_INTERVAL
         value: "300"
-        
-    # Environment variables (set these in the Render dashboard, or here if public)
-    envVars:
-      - key: SCANNER_MIN_SCORE
-        value: "50"
-      - key: SCANNER_INTERVAL
-        value: "300"
-      # Set these in Render dashboard (keep secrets out of git):
-      # VAPID_PUBLIC_KEY
-      # VAPID_PRIVATE_KEY
-      # VAPID_CLAIM_EMAIL
-      # SEC_USER_AGENT
-      # Optional: PUSHOVER_TOKEN, DISCORD_WEBHOOK_URL, etc.
-    
-    # Persistent disk for the SQLite database
-    disk:
-      name: scanner-db
-      mountPath: /app
-      sizeGB: 1
-    
-    # Build command (Render auto-detects Dockerfile, but explicit is clearer)
-    buildCommand: "pip install -r requirements.txt"
-    
-    # Start command (Render auto-runs CMD from Dockerfile, but explicit for clarity)
-    startCommand: "sh -c 'python scanner.py --loop --interval 300 & uvicorn api:app --host 0.0.0.0 --port $PORT'"
-    
-    # Auto-deploy on push
-    autoDeploy: true
