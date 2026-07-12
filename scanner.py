@@ -57,8 +57,17 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # Free, no-key congressional trade datasets (community-maintained mirrors of official
 # House/Senate financial disclosures). Swap for Quiver/FMP/Finnhub later if you want
 # faster refresh or more fields — see README.md.
-HOUSE_TRADES_URL = "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
-SENATE_TRADES_URL = "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json"
+# NOTE (2026): the original House/Senate Stock Watcher S3 buckets now return 403 and
+# are no longer publicly served. These GitHub raw mirrors carry the same JSON schema
+# and are still maintained. Verified reachable and parsing correctly.
+HOUSE_TRADES_URL = os.getenv(
+    "HOUSE_TRADES_URL",
+    "https://raw.githubusercontent.com/TattooedHead/house-stock-watcher-data/master/data/all_transactions.json",
+)
+SENATE_TRADES_URL = os.getenv(
+    "SENATE_TRADES_URL",
+    "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json",
+)
 
 # SEC's free "current filings" atom feed — no key, updated continuously through the trading day
 SEC_CURRENT_FORM4_URL = (
@@ -155,6 +164,27 @@ def parse_dollar_high(value_text: str) -> float:
     return max(nums) if nums else 0.0
 
 
+def normalize_date(value: str) -> str:
+    """
+    Congressional feeds report dates as MM/DD/YYYY; Form 4 / atom use ISO. Return an
+    ISO (YYYY-MM-DD) string so scoring can compare them, or "" if unparseable.
+    Without this, fromisoformat() raised on every congressional row and the
+    disclosure-speed bonus silently never applied.
+    """
+    v = (value or "").strip()
+    if not v or v in ("--", "-"):
+        return ""
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y"):
+        try:
+            return datetime.strptime(v, fmt).date().isoformat()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).date().isoformat()
+    except Exception:
+        return ""
+
+
 def score_insider(role: str, value_text: str, filed_date: str, trade_date: str) -> tuple[int, str]:
     score = 0
     reasons = []
@@ -215,21 +245,32 @@ def score_politician(person: str, committees: str, value_text: str, trade_date: 
         score += 15
         reasons.append("Committee/sector overlap (+15)")
 
-    # STOCK Act allows up to 45 days to disclose — reward faster-than-typical filings
-    try:
-        t = datetime.fromisoformat(trade_date)
-        f = datetime.fromisoformat(filed_date)
-        delay_days = (f - t).days
-        if delay_days <= 14:
-            score += 20
-            reasons.append(f"Fast disclosure, {delay_days}d (+20)")
-        elif delay_days <= 30:
-            score += 10
-            reasons.append(f"Disclosure in {delay_days}d (+10)")
-        else:
-            reasons.append(f"Slow disclosure, {delay_days}d (+0)")
-    except Exception:
-        pass
+    # STOCK Act allows up to 45 days to disclose — reward faster-than-typical filings.
+    # Dates arrive normalized to ISO by normalize_date(). The Senate feed carries no
+    # disclosure date at all, so we say so rather than guessing at a delay.
+    if trade_date and filed_date:
+        try:
+            t = datetime.fromisoformat(trade_date)
+            f = datetime.fromisoformat(filed_date)
+            delay_days = (f - t).days
+            if delay_days <= 0:
+                # ~16% of House rows report disclosure_date == transaction_date. A
+                # same-day STOCK Act disclosure is not credible; it's a transcription
+                # placeholder. Awarding a speed bonus here would inflate the score of
+                # precisely the least trustworthy rows, so we award nothing and say so.
+                reasons.append("Disclosure date not reliable (+0)")
+            elif delay_days <= 14:
+                score += 20
+                reasons.append(f"Fast disclosure, {delay_days}d (+20)")
+            elif delay_days <= 30:
+                score += 10
+                reasons.append(f"Disclosure in {delay_days}d (+10)")
+            else:
+                reasons.append(f"Slow disclosure, {delay_days}d (+0)")
+        except ValueError:
+            reasons.append("Disclosure date unparseable (+0)")
+    else:
+        reasons.append("No disclosure date in feed (+0)")
 
     return min(score, 100), "; ".join(reasons)
 
@@ -336,7 +377,18 @@ def resolve_form4_detail(signal: Signal) -> Signal:
 # ------------------------------------------------------------------------
 
 def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
-    resp = requests.get(url, timeout=30)
+    """
+    Pull congressional purchases from the House/Senate Stock Watcher JSON mirrors.
+
+    Schema notes (verified against the live feeds):
+      * Dates arrive as MM/DD/YYYY, not ISO -> normalize_date() before scoring.
+      * The Senate feed has NO disclosure_date field; only transaction_date. We fall
+        back to the trade date, which means the disclosure-speed bonus can't be
+        computed for Senate rows -- score_politician handles that without inventing
+        a delay it can't actually know.
+      * ticker is often "--" for non-stock assets (bonds, funds); those are skipped.
+    """
+    resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     data = resp.json()
 
@@ -346,10 +398,13 @@ def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
         if "purchase" not in txn_type and "buy" not in txn_type:
             continue
 
-        ticker = row.get("ticker") or row.get("symbol") or "UNKNOWN"
+        ticker = (row.get("ticker") or row.get("symbol") or "").strip()
+        if not ticker or ticker in ("--", "-", "N/A"):
+            continue  # non-stock asset (bond/fund) or untranscribed filing
+
         person = row.get("representative") or row.get("senator") or row.get("name") or "Unknown"
-        trade_date = row.get("transaction_date") or row.get("trade_date") or ""
-        filed_date = row.get("disclosure_date") or row.get("report_date") or ""
+        trade_date = normalize_date(row.get("transaction_date") or row.get("trade_date") or "")
+        filed_date = normalize_date(row.get("disclosure_date") or row.get("report_date") or "")
         amount = row.get("amount") or row.get("range") or ""
         committees = row.get("committees") or ""
 
@@ -360,7 +415,7 @@ def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
         signals.append(Signal(
             id=sig_id,
             source=f"Congress ({chamber})",
-            ticker=ticker,
+            ticker=ticker.upper(),
             person=person,
             role=chamber,
             action="BUY",
@@ -369,7 +424,7 @@ def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
             filed_date=filed_date,
             score=score,
             reasons=reasons,
-            url="",
+            url=row.get("source_url") or row.get("ptr_link") or "",
         ))
     return signals
 
