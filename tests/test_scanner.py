@@ -10,6 +10,7 @@ Covers:
 
 import os
 import sys
+from datetime import date
 
 import pytest
 
@@ -21,11 +22,17 @@ from scanner import (  # noqa: E402
     parse_dollar_high,
     score_insider,
     score_politician,
+    recency_factor,
     already_seen,
     save_signal,
     init_db,
     Signal,
 )
+
+# Scoring tests pin `now` so recency (which decays by trade age) stays deterministic
+# instead of rotting as the wall clock advances. Each pin sits within 30 days of the
+# test's trade_date, so the recency multiplier is x1.0 and these assertions isolate the
+# base scoring math; the recency tiers themselves are exercised separately below.
 
 
 # ------------------------------------------------------------------------
@@ -57,7 +64,9 @@ def test_parse_dollar_high_ignores_bare_commas():
 
 def test_score_insider_ceo_large_prompt():
     # C-suite (+30) + >$1M (+30) + filed within 2 days (+10) = 70
-    score, reasons = score_insider("CEO", "$2,000,000", "2026-07-03", "2026-07-02")
+    score, reasons = score_insider(
+        "CEO", "$2,000,000", "2026-07-03", "2026-07-02", now=date(2026, 7, 5)
+    )
     assert score == 70
     assert "C-suite" in reasons
     assert ">$1M" in reasons
@@ -65,7 +74,7 @@ def test_score_insider_ceo_large_prompt():
 
 
 def test_score_insider_director_midsize_no_date():
-    # Director (+15) + >$250K (+20), no valid dates => no speed bonus = 35
+    # Director (+15) + >$250K (+20), no valid dates => no speed bonus, age unknown = 35
     score, reasons = score_insider("Director", "$300,000", "", "")
     assert score == 35
     assert "Director" in reasons
@@ -81,7 +90,8 @@ def test_score_insider_prompt_bonus_with_iso_datetime_filed():
     # filed_date is a full ISO datetime with offset (as SEC's atom feed gives),
     # trade_date is a bare ISO date — must still compute the speed bonus.
     score, reasons = score_insider(
-        "CFO", "$60,000", "2026-07-07T22:04:06-04:00", "2026-07-06"
+        "CFO", "$60,000", "2026-07-07T22:04:06-04:00", "2026-07-06",
+        now=date(2026, 7, 10),
     )
     # C-suite (+30) + >$50K (+10) + prompt (+10) = 50
     assert score == 50
@@ -89,7 +99,9 @@ def test_score_insider_prompt_bonus_with_iso_datetime_filed():
 
 
 def test_score_insider_capped_at_100():
-    score, _ = score_insider("CEO", "$5,000,000", "2026-07-03", "2026-07-02")
+    score, _ = score_insider(
+        "CEO", "$5,000,000", "2026-07-03", "2026-07-02", now=date(2026, 7, 5)
+    )
     assert score <= 100
 
 
@@ -101,7 +113,7 @@ def test_score_politician_large_fast_with_committee():
     # >$500K (+35) + committee (+15) + fast disclosure <=14d (+20) = 70
     score, reasons = score_politician(
         "Jane Doe", "Armed Services", "$1,000,001 - $5,000,000",
-        "2026-06-01", "2026-06-10"
+        "2026-06-01", "2026-06-10", now=date(2026, 6, 20),
     )
     assert score == 70
     assert ">$500K" in reasons
@@ -112,7 +124,8 @@ def test_score_politician_large_fast_with_committee():
 def test_score_politician_us_date_format_parses():
     # Legacy MM/DD/YYYY dates must still yield the disclosure-speed bonus.
     score, reasons = score_politician(
-        "Jane Doe", "", "$15,001 - $50,000", "06/01/2026", "06/10/2026"
+        "Jane Doe", "", "$15,001 - $50,000", "06/01/2026", "06/10/2026",
+        now=date(2026, 6, 20),
     )
     # >$15K (+10) + fast disclosure 9d (+20) = 30
     assert score == 30
@@ -121,7 +134,8 @@ def test_score_politician_us_date_format_parses():
 
 def test_score_politician_slow_disclosure_no_bonus():
     score, reasons = score_politician(
-        "Jane Doe", "", "$1,001 - $15,000", "2026-01-01", "2026-03-01"
+        "Jane Doe", "", "$1,001 - $15,000", "2026-01-01", "2026-03-01",
+        now=date(2026, 1, 10),
     )
     # below $15K high-end? high end = 15000 -> qualifies for +10; slow disclosure +0
     assert score == 10
@@ -130,8 +144,56 @@ def test_score_politician_slow_disclosure_no_bonus():
 
 def test_score_politician_no_dates_no_committee():
     score, _ = score_politician("Jane Doe", "", "$100,001 - $250,000", "", "")
-    # >$100K (+25) only
+    # >$100K (+25) only, trade age unknown => no decay
     assert score == 25
+
+
+# ------------------------------------------------------------------------
+# recency decay
+# ------------------------------------------------------------------------
+
+def test_recency_factor_tiers():
+    # trade date fixed; vary "now" to walk each tier boundary.
+    trade = "2026-01-01"
+    assert recency_factor(trade, now=date(2026, 1, 20))[0] == 1.00   # 19d
+    assert recency_factor(trade, now=date(2026, 2, 15))[0] == 0.85   # 45d
+    assert recency_factor(trade, now=date(2026, 5, 1))[0] == 0.60    # 120d
+    assert recency_factor(trade, now=date(2026, 12, 1))[0] == 0.35   # 334d, stale
+
+
+def test_recency_factor_unknown_when_undated():
+    factor, reason = recency_factor("", "", now=date(2026, 7, 1))
+    assert factor == 1.0
+    assert "unknown" in reason.lower()
+
+
+def test_recency_factor_future_trade_not_rewarded():
+    # A trade dated in the future is bad data, not a fresh signal.
+    factor, _ = recency_factor("2026-08-01", now=date(2026, 7, 1))
+    assert factor == 1.0
+
+
+def test_recency_factor_falls_back_to_filed_date():
+    # No trade date, but a disclosure date -> age measured from disclosure.
+    factor, _ = recency_factor("", "2026-01-01", now=date(2026, 1, 20))
+    assert factor == 1.00
+
+
+def test_score_politician_stale_trade_is_discounted():
+    # Same strong trade, scored fresh vs. stale: the stale one must rank lower and
+    # fall below the default alert threshold (50), i.e. it stops alerting on its own.
+    fresh, _ = score_politician(
+        "Jane Doe", "Armed Services", "$1,000,001 - $5,000,000",
+        "2026-06-01", "2026-06-10", now=date(2026, 6, 15),
+    )
+    stale, reasons = score_politician(
+        "Jane Doe", "Armed Services", "$1,000,001 - $5,000,000",
+        "2023-06-01", "2023-06-10", now=date(2026, 6, 15),
+    )
+    assert fresh == 70
+    assert stale < fresh
+    assert stale < 50
+    assert "stale" in reasons
 
 
 # ------------------------------------------------------------------------

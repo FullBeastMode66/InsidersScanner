@@ -83,6 +83,18 @@ TOP_TITLES = ("CEO", "CHIEF EXECUTIVE", "CFO", "CHIEF FINANCIAL", "PRESIDENT", "
 # Extend this mapping as you like.
 COMMITTEE_SECTOR_HINTS = ("ARMED SERVICES", "FINANCIAL SERVICES", "ENERGY", "HEALTH", "BANKING")
 
+# Recency decay. A signal's usefulness fades as the underlying trade ages: for a tool
+# that pushes phone alerts, last week's buy matters more than a 2022 one. This is a
+# multiplier on the final score (a stale signal is discounted in proportion to its
+# strength, rather than merely missing a flat bonus), keyed on the *trade* date — how
+# long ago it happened. That is deliberately distinct from disclosure speed (the
+# trade -> public lag), which is scored separately. Note this measures the age of the
+# trade, not how "live" it is: congressional disclosures lag the trade by up to 45
+# days under the STOCK Act (see README) — this scoring never implies otherwise.
+# Each tier is (max_age_days, multiplier); anything older than the last tier is "stale".
+RECENCY_TIERS = ((30, 1.00), (90, 0.85), (180, 0.60))
+RECENCY_STALE_FACTOR = 0.35  # applied to trades older than the last tier boundary
+
 
 # ------------------------------------------------------------------------
 # DATA MODEL
@@ -159,9 +171,12 @@ def save_signal(sig: Signal, path: str = DB_PATH):
 
 def parse_dollar_high(value_text: str) -> float:
     """Congressional disclosures report ranges like '$100,001 - $250,000'. Take the high end."""
-    nums = re.findall(r"[\d,]+", value_text or "")
-    nums = [float(n.replace(",", "")) for n in nums if n]
-    return max(nums) if nums else 0.0
+    vals = []
+    for token in re.findall(r"[\d,]+", value_text or ""):
+        digits = token.replace(",", "")
+        if digits.isdigit():  # a stray "," token cleans to "" -> skip, don't float("")
+            vals.append(float(digits))
+    return max(vals) if vals else 0.0
 
 
 def normalize_date(value: str) -> str:
@@ -185,7 +200,61 @@ def normalize_date(value: str) -> str:
         return ""
 
 
-def score_insider(role: str, value_text: str, filed_date: str, trade_date: str) -> tuple[int, str]:
+def _to_date(value: str):
+    """normalize_date() + parse to a naive date object, or None if unparseable."""
+    iso = normalize_date(value)
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso).date()
+    except ValueError:
+        return None
+
+
+def recency_factor(trade_date: str, filed_date: str = "", now=None) -> tuple[float, str]:
+    """
+    Multiplier in [RECENCY_STALE_FACTOR, 1.0] reflecting how long ago the trade
+    happened, plus a human-readable reason. Keyed on trade_date; falls back to
+    filed_date (disclosure) only when the trade date is missing. If neither parses,
+    no decay is applied (x1.0) since age can't honestly be measured.
+
+    `now` is injectable (a date or datetime) so tests stay deterministic instead of
+    silently rotting as the wall clock advances. A trade dated in the future is bad
+    data, not a fresh signal, so it is treated as unknown rather than rewarded.
+    """
+    if now is None:
+        ref = datetime.now(timezone.utc).date()
+    elif isinstance(now, datetime):
+        ref = now.date()
+    else:
+        ref = now  # assume a date
+
+    d = _to_date(trade_date) or _to_date(filed_date)
+    if d is None:
+        return 1.0, "Trade age unknown"
+
+    age = (ref - d).days
+    if age < 0:
+        return 1.0, "Trade age unknown"
+    for max_days, factor in RECENCY_TIERS:
+        if age <= max_days:
+            if factor >= 1.0:
+                return factor, f"Recent trade, {age}d old"
+            return factor, f"Trade {age}d old (x{factor:.2f})"
+    return RECENCY_STALE_FACTOR, f"Trade {age}d old, stale (x{RECENCY_STALE_FACTOR:.2f})"
+
+
+def _apply_recency(base_score: int, trade_date: str, filed_date: str, now,
+                   reasons: list) -> int:
+    """Cap the base score, scale it by the recency multiplier, append the reason."""
+    base = min(base_score, 100)
+    factor, reason = recency_factor(trade_date, filed_date, now)
+    reasons.append(reason)
+    return max(0, min(round(base * factor), 100))
+
+
+def score_insider(role: str, value_text: str, filed_date: str, trade_date: str,
+                  now=None) -> tuple[int, str]:
     score = 0
     reasons = []
 
@@ -212,23 +281,29 @@ def score_insider(role: str, value_text: str, filed_date: str, trade_date: str) 
         reasons.append(">$50K position (+10)")
 
     # Filing speed confirmation — fast Form 4 filings (within 2 days, as required)
-    # read as "clean" signal quality
-    try:
-        f = datetime.fromisoformat(filed_date.replace("Z", "+00:00"))
-        t = datetime.fromisoformat(trade_date.replace("Z", "+00:00")) if trade_date else f
+    # read as "clean" signal quality. Normalize both dates first so a tz-aware atom
+    # timestamp and a bare ISO trade date don't blow up on subtraction.
+    f = _to_date(filed_date)
+    t = _to_date(trade_date) or f
+    if f is not None and t is not None:
         delay_days = (f - t).days
         if delay_days <= 2:
             score += 10
             reasons.append("Filed promptly (+10)")
-    except Exception:
-        pass
 
-    return min(score, 100), "; ".join(reasons)
+    score = _apply_recency(score, trade_date, filed_date, now, reasons)
+    return score, "; ".join(reasons)
 
 
-def score_politician(person: str, committees: str, value_text: str, trade_date: str, filed_date: str) -> tuple[int, str]:
+def score_politician(person: str, committees: str, value_text: str, trade_date: str,
+                     filed_date: str, now=None) -> tuple[int, str]:
     score = 0
     reasons = []
+
+    # Be robust whether the caller passed raw feed dates (MM/DD/YYYY) or already-ISO
+    # ones; normalize_date() is idempotent on ISO input.
+    trade_date = normalize_date(trade_date)
+    filed_date = normalize_date(filed_date)
 
     dollar = parse_dollar_high(value_text)
     if dollar >= 500_000:
@@ -272,7 +347,8 @@ def score_politician(person: str, committees: str, value_text: str, trade_date: 
     else:
         reasons.append("No disclosure date in feed (+0)")
 
-    return min(score, 100), "; ".join(reasons)
+    score = _apply_recency(score, trade_date, filed_date, now, reasons)
+    return score, "; ".join(reasons)
 
 
 # ------------------------------------------------------------------------

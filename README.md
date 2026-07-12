@@ -197,10 +197,35 @@ export SCANNER_CORS_ORIGINS="*"   # phone-app API: lock to your domain in produc
 ## Scoring logic (summary)
 
 **Insider (Form 4) score** = seniority weight (officer > director > other) +
-dollar-size weight + filing-speed bonus.
+dollar-size weight + filing-speed bonus, then scaled by the recency multiplier.
 
 **Politician score** = disclosed dollar-range weight + committee/sector overlap
-bonus + disclosure-speed bonus (faster than the 45-day max = higher score).
+bonus + disclosure-speed bonus (faster than the 45-day max = higher score), then
+scaled by the recency multiplier.
+
+**Recency multiplier** (both sources) discounts the whole signal by how long ago the
+*trade* happened — for an alerting tool, last week's buy should outrank a 2022 one:
+
+| Age of trade | Multiplier |
+| --- | --- |
+| ≤ 30 days | ×1.00 |
+| 31–90 days | ×0.85 |
+| 91–180 days | ×0.60 |
+| > 180 days | ×0.35 (stale) |
+
+It multiplies rather than adds a flat bonus, so a stale signal is discounted in
+proportion to its strength instead of merely missing points. Trades with no usable
+date get ×1.00 (age can't be measured, so it isn't penalized). This is deliberately
+separate from the disclosure-speed bonus: recency is *when the trade happened*,
+disclosure speed is *the trade→public lag* — the two never double-count, and neither
+implies the feed is real-time (see the limitation above). Because a stale trade caps
+at 100 × 0.35 = 35 — below the default `SCANNER_MIN_SCORE` of 50 — old trades drop out
+of alerts on their own while still appearing, ranked low, in the app. The score is
+computed once when a signal is first seen and frozen (dedup never re-scores), so a
+signal that's genuinely fresh at capture keeps that score as it ages; bulk historical
+rows enter with their true age and are decayed correctly.
 
 Both are capped at 100 and shown with a progress bar in the dashboard, same visual
-language as a breakout scanner's strength meter.
+language as a breakout scanner's strength meter. Every component above is emitted in
+the signal's human-readable `reasons` string, so the dashboard and app always show
+the "why" behind a score.
