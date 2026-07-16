@@ -66,8 +66,9 @@ If you are about to touch this codebase, read the relevant section below first.
 ## Architecture
 
 ```
-   SEC Form 4 atom feed              House / Senate Stock Watcher JSON
-   (fetch_sec_form4 +                (fetch_congress_trades, per chamber)
+   SEC Form 4 atom feed              House mirror + Senate efdsearch-scrape JSON
+   (fetch_sec_form4 +                (fetch_congress_trades, per chamber; handles
+    resolve_form4_detail)             flat-list and {"trades": [...]} shapes)
     resolve_form4_detail)                        |
             |                                     |
             v                                     v
@@ -155,12 +156,13 @@ Edit `score_insider()` or `score_politician()` in `scanner.py`. Rules:
   ×0.35). Keep recency (trade age) distinct from the disclosure-speed bonus (trade →
   public lag); they must not double-count.
 - **Cross-chamber normalization** (`_normalize_chamber()` / `CHAMBER_MAX_BASE`) scales
-  a chamber to a common ceiling so a source whose free feed omits fields isn't capped
-  below richer ones — the Senate feed has no disclosure date (and neither free feed has
-  committees, so that bonus is currently inert). Pass the real `chamber` to
-  `score_politician()`. Only mark a component structurally available if the feed
-  actually carries it — verify against the live feed, don't assume. Normalization
-  removes a structural penalty; it must never fabricate data the feed lacks.
+  a chamber whose feed omits a field up to the common ceiling. It's a **no-op today**
+  (both current feeds carry transaction + disclosure dates, so both ceilings are 55),
+  kept as defensive machinery for a future field-poor source. Pass the real `chamber`
+  to `score_politician()`. If you swap a feed, update that chamber's `CHAMBER_MAX_BASE`
+  to match what the new feed actually carries — verify against the live feed, don't
+  assume. Normalization removes a structural penalty; it must never fabricate data.
+  A row missing a field simply scores lower (fewer confirmations), never inflated.
 - Scoring must **never** use wall-clock `now` non-deterministically in a way tests
   can't pin — the score functions take an injectable `now=None`. Preserve that.
 - Scores are **frozen at first insert** (dedup never re-scores). Recency is computed

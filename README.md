@@ -135,8 +135,15 @@ No API key is required to get running. It uses:
 | Data | Source | Key needed? |
 |---|---|---|
 | Insider Form 4 filings | SEC EDGAR "current filings" feed | No |
-| House trades | House Stock Watcher dataset | No |
-| Senate trades | Senate Stock Watcher dataset | No |
+| House trades | House Stock Watcher mirror (GitHub, daily) | No |
+| Senate trades | `legislative-alpha` fork (GitHub Action scrapes efdsearch.senate.gov daily) | No |
+
+Both congressional sources are GitHub repos whose Actions cron scrapes the official
+disclosures and commits fresh JSON, so the scanner reads a static raw file rather than
+a bot-walled site. `efdsearch.senate.gov` 403s datacenter IPs (like Render's), but not
+GitHub's runners — so a **fork you own** does the scraping and the scanner just reads
+its `data.json`. Point `SENATE_TRADES_URL` at your fork; see
+[Live Senate data](#live-senate-data-your-own-fork).
 
 ## Important limitation: this is not real-time for politicians
 
@@ -145,6 +152,28 @@ scanner catches those quickly. Members of Congress have up to **45 days** under 
 STOCK Act to disclose a trade, so "new" congressional signals in this tool reflect
 when a trade *became public*, not when it happened. The scoring engine rewards
 faster-than-typical disclosures, but it can't make a 6-week-old trade "live."
+
+## Live Senate data (your own fork)
+
+The original Senate Stock Watcher mirror died in 2020, and `efdsearch.senate.gov`
+blocks datacenter IPs, so a Render-hosted scraper can't read it directly. The fix is
+a GitHub repo whose Action scrapes efdsearch from GitHub's runners and commits the
+result — you consume that static JSON. Run your own so the pipeline is yours:
+
+1. Fork [`legislative-alpha`](https://github.com/alexbrunelli08-lgtm/legislative-alpha)
+   into your account (e.g. `FullBeastMode66/legislative-alpha`).
+2. In the fork: **Actions** tab → enable workflows → run **"Daily data update"** once
+   (it also runs daily on cron). Senate scraping needs no key; only the unused bills
+   feature does, so optionally add a free [Congress.gov key](https://api.congress.gov/sign-up)
+   as the `CONGRESS_API_KEY` Actions secret to silence that part.
+3. Set `SENATE_TRADES_URL` to your fork's raw file (in Render's Environment tab):
+   `https://raw.githubusercontent.com/<you>/legislative-alpha/HEAD/data.json`
+   (the code default already points at `FullBeastMode66`'s fork).
+
+`fetch_congress_trades()` handles this feed's `{"trades": [...]}` shape and its
+`filed_date` / `amount_range` field names, so no code change is needed. If the fork
+ever stops updating, repoint `SENATE_TRADES_URL` — the scanner degrades gracefully
+(a failing source logs `[WARN]` and the scan continues).
 
 ## Upgrading past the free tier
 
@@ -205,24 +234,16 @@ dollar-size weight + filing-speed bonus, then scaled by the recency multiplier.
 
 **Politician score** = disclosed dollar-range weight + committee/sector overlap
 bonus + disclosure-speed bonus (faster than the 45-day max = higher score), then
-normalized across chambers, then scaled by the recency multiplier.
+scaled by the recency multiplier.
 
-**Cross-chamber normalization.** The free House and Senate feeds don't carry the same
-fields, so raw scores aren't comparable. The House feed has transaction + disclosure
-dates (disclosure speed is scorable); the Senate feed has only the transaction date —
-no disclosure date. (Neither free feed currently carries committee data, so the
-committee bonus is inert against both and reserved for a future richer source.) A
-Senate signal could therefore only ever earn the dollar-size component, capping it far
-below House regardless of trade size. Each chamber's score is scaled to a common
-ceiling based on what its feed can structurally provide, so a large, fresh Senate buy
-competes with a large, fresh House one. House already spans the full range, so House
-scores are unchanged. This invents no disclosure or committee data — it only removes
-the structural penalty, and the scaling is shown in the `reasons` string.
-
-> **Senate data caveat:** the default Senate mirror stopped updating in late 2020, so
-> in practice every Senate trade is stale and suppressed by recency regardless of
-> normalization. Point `SENATE_TRADES_URL` at a maintained feed to get live Senate
-> signals.
+**Cross-chamber scoring.** House and Senate now score on the same footing: both feeds
+carry transaction *and* disclosure dates, so a Senate buy earns disclosure-speed just
+like a House one. (Neither free feed carries committee data, so that bonus is inert
+against both and reserved for a future richer source.) A `_normalize_chamber()` step
+remains that would scale up a chamber whose feed omits a field — it's a no-op today
+since both feeds carry the same fields, kept only as defensive machinery for a future
+field-poor source. A row missing a disclosure date simply scores lower (fewer
+confirmations), never inflated.
 
 **Recency multiplier** (both sources) discounts the whole signal by how long ago the
 *trade* happened — for an alerting tool, last week's buy should outrank a 2022 one:

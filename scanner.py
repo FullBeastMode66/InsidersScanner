@@ -54,19 +54,24 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Free, no-key congressional trade datasets (community-maintained mirrors of official
-# House/Senate financial disclosures). Swap for Quiver/FMP/Finnhub later if you want
-# faster refresh or more fields — see README.md.
-# NOTE (2026): the original House/Senate Stock Watcher S3 buckets now return 403 and
-# are no longer publicly served. These GitHub raw mirrors carry the same JSON schema
-# and are still maintained. Verified reachable and parsing correctly.
+# Free, no-key congressional trade datasets, each a GitHub repo whose Actions cron
+# scrapes the official disclosures and commits fresh JSON (so we read a static raw
+# file, not a rate-limited/bot-walled site). Both are overridable via env var; swap
+# for Quiver/FMP/Finnhub later if you want faster refresh — see README.md.
+#   * House  — House Stock Watcher mirror (flat list, disclosure_date + amount fields).
+#   * Senate — a fork of the "legislative-alpha" tracker, whose daily Action scrapes
+#     efdsearch.senate.gov (which 403s datacenter IPs like Render, but not GitHub's
+#     runners) and commits data.json as {"trades": [...]}. Unlike the old dollar-only
+#     Stock Watcher mirror (dead since 2020), this feed includes the disclosure date.
+#     fetch_congress_trades() handles both the flat-list and {"trades": [...]} shapes.
+# Point SENATE_TRADES_URL at your own fork so the pipeline is one you control.
 HOUSE_TRADES_URL = os.getenv(
     "HOUSE_TRADES_URL",
     "https://raw.githubusercontent.com/TattooedHead/house-stock-watcher-data/master/data/all_transactions.json",
 )
 SENATE_TRADES_URL = os.getenv(
     "SENATE_TRADES_URL",
-    "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json",
+    "https://raw.githubusercontent.com/FullBeastMode66/legislative-alpha/HEAD/data.json",
 )
 
 # SEC's free "current filings" atom feed — no key, updated continuously through the trading day
@@ -100,22 +105,19 @@ RECENCY_STALE_FACTOR = 0.35  # applied to trades older than the last tier bounda
 POL_MAX_DOLLAR = 35
 POL_MAX_COMMITTEE = 15
 POL_MAX_DISCLOSURE = 20
-# ...but the two free feeds don't carry the same fields, so raw scores aren't
-# comparable across chambers. Verified against the live feeds (2026): the House feed
-# carries transaction + disclosure dates (disclosure speed is scorable) but NO
-# committee field; the Senate feed carries only the transaction date (no disclosure
-# date, no committees). The committee bonus is therefore dead against BOTH current
-# feeds — kept only for a future richer/paid source — so it is not counted as
-# structurally available here. Without normalization a Senate signal is capped at the
-# dollar weight alone (35) while House reaches 55, so even a huge, fresh Senate buy
-# could never clear the alert threshold. CHAMBER_MAX_BASE records what each chamber's
-# feed can structurally earn; scores are scaled to the common ceiling (the largest of
-# these) so a top-tier Senate buy competes with a top-tier House one. This invents no
-# disclosure timing or committee data — it only stops penalizing a chamber for fields
-# its free feed omits.
+# CHAMBER_MAX_BASE records what each chamber's feed can structurally earn; a chamber
+# whose feed omits a field is scaled up to the common ceiling so it isn't permanently
+# capped below richer ones (see _normalize_chamber). Neither free feed carries a
+# committee field, so that bonus is dead against both (kept only for a future richer
+# source) and isn't counted here. As of the current feeds BOTH chambers carry
+# transaction + disclosure dates — the House Stock Watcher mirror, and the Senate feed
+# scraped from efdsearch.senate.gov (see SENATE_TRADES_URL) which, unlike the old
+# dollar-only mirror, includes the disclosure date. So both ceilings are 55 and the
+# scaling is currently a no-op; it stays as defensive machinery for a future
+# field-poor source (e.g. a dollar-only feed), which would be scaled back up.
 CHAMBER_MAX_BASE = {
-    "House": POL_MAX_DOLLAR + POL_MAX_DISCLOSURE,   # 55
-    "Senate": POL_MAX_DOLLAR,                        # 35
+    "House": POL_MAX_DOLLAR + POL_MAX_DISCLOSURE,    # 55
+    "Senate": POL_MAX_DOLLAR + POL_MAX_DISCLOSURE,   # 55 (feed carries disclosure dates)
 }
 POL_TARGET_BASE = max(CHAMBER_MAX_BASE.values())    # 55 — common ceiling
 
@@ -501,19 +503,27 @@ def resolve_form4_detail(signal: Signal) -> Signal:
 
 def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
     """
-    Pull congressional purchases from the House/Senate Stock Watcher JSON mirrors.
+    Pull congressional purchases from a free House/Senate JSON feed.
+
+    Handles two shapes so the House and Senate sources (which differ) share one path:
+      * a flat list of rows (House Stock Watcher mirror), or
+      * an object wrapping the rows under "trades" / "transactions" (the
+        efdsearch-scraping Senate feed, see SENATE_TRADES_URL).
+
+    Field names also vary between feeds, so each is read through a set of aliases
+    (e.g. disclosure_date | report_date | filed_date; amount | range | amount_range).
 
     Schema notes (verified against the live feeds):
       * Dates arrive as MM/DD/YYYY, not ISO -> normalize_date() before scoring.
-      * The Senate feed has NO disclosure_date field; only transaction_date. We fall
-        back to the trade date, which means the disclosure-speed bonus can't be
-        computed for Senate rows -- score_politician handles that without inventing
-        a delay it can't actually know.
+      * A row with no usable disclosure date still scores on size + recency;
+        score_politician() says so rather than inventing a delay it can't know.
       * ticker is often "--" for non-stock assets (bonds, funds); those are skipped.
     """
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     data = resp.json()
+    if isinstance(data, dict):  # {"trades": [...]} / {"transactions": [...]} feeds
+        data = data.get("trades") or data.get("transactions") or []
 
     signals = []
     for row in data:
@@ -527,8 +537,10 @@ def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
 
         person = row.get("representative") or row.get("senator") or row.get("name") or "Unknown"
         trade_date = normalize_date(row.get("transaction_date") or row.get("trade_date") or "")
-        filed_date = normalize_date(row.get("disclosure_date") or row.get("report_date") or "")
-        amount = row.get("amount") or row.get("range") or ""
+        filed_date = normalize_date(
+            row.get("disclosure_date") or row.get("report_date") or row.get("filed_date") or ""
+        )
+        amount = row.get("amount") or row.get("range") or row.get("amount_range") or ""
         committees = row.get("committees") or ""
 
         sig_id = f"CONGRESS-{chamber}-{person}-{ticker}-{trade_date}-{amount}"
@@ -548,7 +560,7 @@ def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
             filed_date=filed_date,
             score=score,
             reasons=reasons,
-            url=row.get("source_url") or row.get("ptr_link") or "",
+            url=row.get("source_url") or row.get("ptr_link") or row.get("report_url") or "",
         ))
     return signals
 

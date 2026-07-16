@@ -149,65 +149,66 @@ def test_score_politician_no_dates_no_committee():
 
 
 # ------------------------------------------------------------------------
-# cross-chamber normalization (Senate feed has no disclosure_date/committees)
+# cross-chamber scoring
+#
+# Both current feeds carry transaction + disclosure dates, so the chambers score
+# identically and _normalize_chamber() is a no-op. It is retained only for a
+# hypothetical future field-poor feed, unit-tested directly at the end.
 # ------------------------------------------------------------------------
 
-def test_house_scores_unchanged_by_normalization():
-    # House ceiling == target, so passing chamber="House" must not alter the score.
-    plain, _ = score_politician(
-        "Rep X", "", "$1,000,001 - $5,000,000", "2026-06-01", "2026-06-10",
-        now=date(2026, 6, 15),
-    )
-    house, reasons = score_politician(
-        "Rep X", "", "$1,000,001 - $5,000,000", "2026-06-01", "2026-06-10",
-        chamber="House", now=date(2026, 6, 15),
-    )
-    assert house == plain           # >$500K (+35) + fast disclosure (+20) = 55
-    assert house == 55
-    assert "normalized" not in reasons.lower()
+def test_house_and_senate_score_identically():
+    # Same inputs, different chamber -> identical score (normalization inert), and no
+    # spurious "normalized" note now that both feeds carry disclosure dates.
+    args = ("Member", "", "$1,000,001 - $5,000,000", "2026-06-10", "2026-06-18")
+    house, hr = score_politician(*args, chamber="House", now=date(2026, 6, 25))
+    senate, sr = score_politician(*args, chamber="Senate", now=date(2026, 6, 25))
+    assert house == senate == 55    # >$500K (+35) + fast disclosure 8d (+20) = 55
+    assert "normalized" not in (hr + sr).lower()
 
 
 def test_senate_large_fresh_buy_is_competitive():
-    # Senate feed has no disclosure date -> only the dollar component is earnable.
-    # Normalization must lift a large, fresh Senate buy to the common ceiling so it
-    # clears the default alert threshold (50), matching a top-tier House buy.
+    # With disclosure dates in the feed, a large fresh Senate buy reaches the ceiling
+    # on its own merits (size + disclosure speed) and clears the alert threshold.
+    score, reasons = score_politician(
+        "Sen Y", "", "$1,000,001 - $5,000,000", "2026-06-10", "2026-06-18",
+        chamber="Senate", now=date(2026, 6, 25),
+    )
+    assert score == 55              # >$500K (+35) + fast disclosure 8d (+20)
+    assert score >= 50              # alert-eligible
+    assert "Fast disclosure" in reasons
+    assert "normalized" not in reasons.lower()
+
+
+def test_senate_no_disclosure_scores_on_size_only():
+    # A row without a disclosure date isn't inflated -- it just scores lower (fewer
+    # confirmations). Fresh >$500K with no disclosure date = 35, not 55.
     score, reasons = score_politician(
         "Sen Y", "", "$1,000,001 - $5,000,000", "2026-06-10", "",
-        chamber="Senate", now=date(2026, 6, 15),
+        chamber="Senate", now=date(2026, 6, 25),
     )
-    assert score == 55              # >$500K (+35) x (55/35) -> 55, fresh -> x1.0
-    assert score >= 50              # now alert-eligible
+    assert score == 35
     assert "No disclosure date in feed" in reasons
-    assert "normalized" in reasons.lower()
-
-
-def test_senate_normalization_capped_at_ceiling():
-    # Normalized Senate score must never exceed the common ceiling.
-    score, _ = score_politician(
-        "Sen Y", "", "$5,000,000", "2026-06-10", "", chamber="Senate",
-        now=date(2026, 6, 15),
-    )
-    assert score <= 55
-
-
-def test_senate_small_buy_stays_below_threshold():
-    # Normalization lifts the ceiling, not the noise floor: a small fresh Senate buy
-    # must not become alert-eligible.
-    score, _ = score_politician(
-        "Sen Y", "", "$15,001 - $50,000", "2026-06-10", "", chamber="Senate",
-        now=date(2026, 6, 15),
-    )
-    assert score < 50               # >$15K (+10) x1.57 -> ~16
+    assert "normalized" not in reasons.lower()
 
 
 def test_senate_stale_large_buy_still_suppressed():
-    # Recency still applies after normalization: an old large Senate buy stays low.
+    # Recency suppresses an old large Senate buy regardless of chamber.
     score, reasons = score_politician(
-        "Sen Y", "", "$1,000,001 - $5,000,000", "2022-06-10", "",
-        chamber="Senate", now=date(2026, 6, 15),
+        "Sen Y", "", "$1,000,001 - $5,000,000", "2022-06-10", "2022-06-18",
+        chamber="Senate", now=date(2026, 6, 25),
     )
     assert score < 50
     assert "stale" in reasons
+
+
+def test_normalize_chamber_still_scales_a_field_poor_source(monkeypatch):
+    # Defensive machinery: a hypothetical feed whose chamber can only earn the dollar
+    # component (ceiling below target) is scaled up toward the common ceiling.
+    monkeypatch.setitem(scanner.CHAMBER_MAX_BASE, "PoorFeed", scanner.POL_MAX_DOLLAR)
+    reasons = []
+    scaled = scanner._normalize_chamber(scanner.POL_MAX_DOLLAR, "PoorFeed", reasons)
+    assert scaled == scanner.POL_TARGET_BASE            # 35 -> 55
+    assert any("normalized" in r.lower() for r in reasons)
 
 
 # ------------------------------------------------------------------------
@@ -256,6 +257,57 @@ def test_score_politician_stale_trade_is_discounted():
     assert stale < fresh
     assert stale < 50
     assert "stale" in reasons
+
+
+# ------------------------------------------------------------------------
+# fetch_congress_trades schema handling (network mocked)
+# ------------------------------------------------------------------------
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._p
+
+
+def test_fetch_congress_trades_parses_wrapped_senate_feed(monkeypatch):
+    # The efdsearch-scraped Senate feed wraps rows under "trades" and uses
+    # filed_date / amount_range field names -> must still yield scored purchase Signals.
+    payload = {"generated_at": "2026-07-16", "trades": [
+        {"senator": "Sen Y", "ticker": "msft", "transaction_date": "06/10/2026",
+         "filed_date": "06/18/2026", "type": "Purchase",
+         "amount_range": "$1,000,001 - $5,000,000", "report_url": "http://efd/x"},
+        {"senator": "Sen Y", "ticker": "AAPL", "transaction_date": "06/10/2026",
+         "filed_date": "06/18/2026", "type": "Sale (Full)", "amount_range": "$1,001 - $15,000"},
+        {"senator": "Sen Z", "ticker": "--", "transaction_date": "06/10/2026",
+         "filed_date": "06/18/2026", "type": "Purchase", "amount_range": "$1,001 - $15,000"},
+    ]}
+    monkeypatch.setattr(scanner.requests, "get", lambda *a, **k: _FakeResp(payload))
+    sigs = scanner.fetch_congress_trades("http://x", "Senate")
+    # only row 1 survives: purchase + real ticker (sale skipped, "--" skipped)
+    assert len(sigs) == 1
+    s = sigs[0]
+    assert s.ticker == "MSFT" and s.person == "Sen Y" and s.source == "Congress (Senate)"
+    assert s.trade_date == "2026-06-10" and s.filed_date == "2026-06-18"
+    assert s.url == "http://efd/x"
+    assert ">$500K" in s.reasons and "Fast disclosure" in s.reasons
+    assert "normalized" not in s.reasons.lower()
+
+
+def test_fetch_congress_trades_parses_flat_house_feed(monkeypatch):
+    # The House mirror is a flat list with disclosure_date / amount fields.
+    payload = [
+        {"representative": "Rep X", "ticker": "NVDA", "transaction_date": "06/10/2026",
+         "disclosure_date": "06/18/2026", "type": "purchase", "amount": "$1,001 - $15,000"},
+    ]
+    monkeypatch.setattr(scanner.requests, "get", lambda *a, **k: _FakeResp(payload))
+    sigs = scanner.fetch_congress_trades("http://x", "House")
+    assert len(sigs) == 1
+    assert sigs[0].ticker == "NVDA" and sigs[0].source == "Congress (House)"
 
 
 # ------------------------------------------------------------------------
