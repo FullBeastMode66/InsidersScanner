@@ -11,6 +11,10 @@ each one 0–100 based on stacked "confirmations" (role seniority, dollar size, 
 speed, committee relevance) — the same mental model a breakout scanner uses for
 volume/volatility confirmation.
 
+> **Contributing / extending this project?** See [SKILL.md](SKILL.md) for development
+> guidelines — architecture, the `Signal` contract, scoring rules, the "not real-time"
+> data reality, and a per-change validation checklist.
+
 ## Quick start
 
 ```bash
