@@ -363,3 +363,29 @@ def test_distinct_ids_coexist(tmp_path):
     assert already_seen("SEC-A", db) is True
     assert already_seen("SEC-B", db) is True
     assert already_seen("SEC-C", db) is False
+
+
+def test_purge_stale_senate_only_removes_old_senate(tmp_path):
+    db = str(tmp_path / "scanner_test.db")
+    init_db(db)
+
+    def sig(sid, source, td):
+        return Signal(id=sid, source=source, ticker="X", person="P", role="Senate",
+                      action="BUY", value="$1", trade_date=td, filed_date="",
+                      score=10, reasons="", url="")
+
+    save_signal(sig("s-old", "Congress (Senate)", "2020-06-01"), db)   # purged
+    save_signal(sig("s-new", "Congress (Senate)", "2026-06-01"), db)   # kept (recent)
+    save_signal(sig("s-nodate", "Congress (Senate)", ""), db)          # kept (no date)
+    save_signal(sig("h-old", "Congress (House)", "2020-06-01"), db)    # kept (House)
+
+    n = scanner.purge_stale_senate("2025-01-01", db)
+    assert n == 1
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    try:
+        ids = {r[0] for r in conn.execute("SELECT id FROM signals").fetchall()}
+    finally:
+        conn.close()
+    assert ids == {"s-new", "s-nodate", "h-old"}

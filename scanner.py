@@ -10,9 +10,10 @@ dedupes against a local SQLite DB, and fires alerts (console / Pushover / Discor
 for anything above your threshold.
 
 Run:
-    python scanner.py                 # one pass
-    python scanner.py --loop          # continuous, polls every INTERVAL_SECONDS
-    streamlit run dashboard.py        # visual scanner table (separate file)
+    python scanner.py                    # one pass
+    python scanner.py --loop             # continuous, polls every INTERVAL_SECONDS
+    python scanner.py --purge-stale-senate  # one-off: drop retired-mirror Senate rows
+    streamlit run dashboard.py           # visual scanner table (separate file)
 
 No paid API key is required to get this running. Optional keys (SEC-API.io, Quiver, Polygon)
 can be dropped in later for lower latency / richer data — see README.md.
@@ -189,6 +190,27 @@ def save_signal(sig: Signal, path: str = DB_PATH):
     ))
     conn.commit()
     conn.close()
+
+
+def purge_stale_senate(before: str, path: str = DB_PATH) -> int:
+    """
+    Delete Senate signals whose trade happened before `before` (ISO YYYY-MM-DD) and
+    return how many were removed. These are leftovers from the retired dollar-only
+    Senate mirror (data ended in 2020); the current feed carries only recent trades,
+    so a purge is permanent — nothing re-adds them. Rows with no trade_date are left
+    alone. Run once via `python scanner.py --purge-stale-senate`.
+    """
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM signals WHERE source = 'Congress (Senate)' "
+            "AND trade_date != '' AND trade_date < ?",
+            (before,),
+        )
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------------
@@ -670,7 +692,17 @@ def main():
     parser = argparse.ArgumentParser(description="Insider / Politician Buy Scanner")
     parser.add_argument("--loop", action="store_true", help="Run continuously")
     parser.add_argument("--interval", type=int, default=INTERVAL_SECONDS, help="Seconds between scans")
+    parser.add_argument("--purge-stale-senate", action="store_true",
+                        help="Delete Senate signals with trade_date before --before, then exit "
+                             "(one-off cleanup of retired-mirror rows)")
+    parser.add_argument("--before", default="2025-01-01",
+                        help="Cutoff date YYYY-MM-DD for --purge-stale-senate (default 2025-01-01)")
     args = parser.parse_args()
+
+    if args.purge_stale_senate:
+        n = purge_stale_senate(args.before)
+        print(f"Purged {n} stale Senate signal(s) with trade_date before {args.before}")
+        return
 
     if args.loop:
         while True:
