@@ -704,6 +704,19 @@ def main():
         print(f"Purged {n} stale Senate signal(s) with trade_date before {args.before}")
         return
 
+    # One-off cleanup hook for hosts where a separate shell session can't reach the
+    # service's persistent DB (e.g. Render): set PURGE_STALE_SENATE_BEFORE and the
+    # purge runs HERE, inside the long-running process that actually owns the DB the
+    # API reads. Idempotent — a second run deletes 0 — so it's safe to leave set, but
+    # you can unset it once the count is confirmed.
+    purge_before = os.getenv("PURGE_STALE_SENATE_BEFORE")
+    if purge_before:
+        try:
+            n = purge_stale_senate(purge_before)
+            print(f"[startup] purged {n} stale Senate signal(s) with trade_date before {purge_before}")
+        except Exception as e:
+            print(f"[WARN] startup purge failed: {e}")
+
     if args.loop:
         while True:
             try:
