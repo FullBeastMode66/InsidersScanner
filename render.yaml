@@ -10,6 +10,12 @@ services:
       mountPath: /data
       sizeGB: 1
     envVars:
+      # Keep the SQLite DB on the persistent disk (mounted at /data above) so signal
+      # dedup history and push subscriptions survive redeploys. Without this the DB
+      # defaults to a relative path on the ephemeral container filesystem and is wiped
+      # on every deploy.
+      - key: SCANNER_DB
+        value: /data/scanner.db
       - key: SCANNER_MIN_SCORE
         value: "50"
       - key: SCANNER_INTERVAL
