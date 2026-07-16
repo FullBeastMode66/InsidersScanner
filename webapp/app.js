@@ -8,7 +8,7 @@ const API = {
   status: () => fetch("/api/scan/status").then((r) => r.json()),
 };
 
-const state = { source: "all", minScore: 50, ticker: "", scanning: false };
+const state = { source: "all", minScore: 25, ticker: "", scanning: false };
 
 const el = (id) => document.getElementById(id);
 const listEl = el("list");

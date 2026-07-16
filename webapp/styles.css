@@ -153,6 +153,7 @@ body {
 .score-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px; padding: 0 2px; }
 .score-row label { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .score-row label b { color: var(--text); font-family: var(--mono); font-size: 14px; }
+.score-hint { margin: 6px 2px 0; font-size: 11px; color: var(--muted-2); line-height: 1.3; }
 input[type="range"] {
   -webkit-appearance: none; appearance: none; height: 5px; border-radius: 8px;
   background: linear-gradient(90deg, rgba(79,195,214,0.4), rgba(245,178,61,0.4), rgba(255,93,82,0.4));

@@ -5,7 +5,7 @@
 // Bump this version whenever any SHELL_ASSET below changes, or installed PWAs keep
 // serving the old cached shell (cache-first) and never see the update. A changed
 // sw.js is what triggers the browser to install a new worker and re-fetch the shell.
-const SHELL_CACHE = "scanner-shell-v3";
+const SHELL_CACHE = "scanner-shell-v4";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
