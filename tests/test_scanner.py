@@ -149,6 +149,68 @@ def test_score_politician_no_dates_no_committee():
 
 
 # ------------------------------------------------------------------------
+# cross-chamber normalization (Senate feed has no disclosure_date/committees)
+# ------------------------------------------------------------------------
+
+def test_house_scores_unchanged_by_normalization():
+    # House ceiling == target, so passing chamber="House" must not alter the score.
+    plain, _ = score_politician(
+        "Rep X", "", "$1,000,001 - $5,000,000", "2026-06-01", "2026-06-10",
+        now=date(2026, 6, 15),
+    )
+    house, reasons = score_politician(
+        "Rep X", "", "$1,000,001 - $5,000,000", "2026-06-01", "2026-06-10",
+        chamber="House", now=date(2026, 6, 15),
+    )
+    assert house == plain           # >$500K (+35) + fast disclosure (+20) = 55
+    assert house == 55
+    assert "normalized" not in reasons.lower()
+
+
+def test_senate_large_fresh_buy_is_competitive():
+    # Senate feed has no disclosure date -> only the dollar component is earnable.
+    # Normalization must lift a large, fresh Senate buy to the common ceiling so it
+    # clears the default alert threshold (50), matching a top-tier House buy.
+    score, reasons = score_politician(
+        "Sen Y", "", "$1,000,001 - $5,000,000", "2026-06-10", "",
+        chamber="Senate", now=date(2026, 6, 15),
+    )
+    assert score == 55              # >$500K (+35) x (55/35) -> 55, fresh -> x1.0
+    assert score >= 50              # now alert-eligible
+    assert "No disclosure date in feed" in reasons
+    assert "normalized" in reasons.lower()
+
+
+def test_senate_normalization_capped_at_ceiling():
+    # Normalized Senate score must never exceed the common ceiling.
+    score, _ = score_politician(
+        "Sen Y", "", "$5,000,000", "2026-06-10", "", chamber="Senate",
+        now=date(2026, 6, 15),
+    )
+    assert score <= 55
+
+
+def test_senate_small_buy_stays_below_threshold():
+    # Normalization lifts the ceiling, not the noise floor: a small fresh Senate buy
+    # must not become alert-eligible.
+    score, _ = score_politician(
+        "Sen Y", "", "$15,001 - $50,000", "2026-06-10", "", chamber="Senate",
+        now=date(2026, 6, 15),
+    )
+    assert score < 50               # >$15K (+10) x1.57 -> ~16
+
+
+def test_senate_stale_large_buy_still_suppressed():
+    # Recency still applies after normalization: an old large Senate buy stays low.
+    score, reasons = score_politician(
+        "Sen Y", "", "$1,000,001 - $5,000,000", "2022-06-10", "",
+        chamber="Senate", now=date(2026, 6, 15),
+    )
+    assert score < 50
+    assert "stale" in reasons
+
+
+# ------------------------------------------------------------------------
 # recency decay
 # ------------------------------------------------------------------------
 

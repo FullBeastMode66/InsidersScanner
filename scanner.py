@@ -95,6 +95,30 @@ COMMITTEE_SECTOR_HINTS = ("ARMED SERVICES", "FINANCIAL SERVICES", "ENERGY", "HEA
 RECENCY_TIERS = ((30, 1.00), (90, 0.85), (180, 0.60))
 RECENCY_STALE_FACTOR = 0.35  # applied to trades older than the last tier boundary
 
+# Cross-chamber normalization. Politician scoring has three components with these
+# maximum weights:
+POL_MAX_DOLLAR = 35
+POL_MAX_COMMITTEE = 15
+POL_MAX_DISCLOSURE = 20
+# ...but the two free feeds don't carry the same fields, so raw scores aren't
+# comparable across chambers. Verified against the live feeds (2026): the House feed
+# carries transaction + disclosure dates (disclosure speed is scorable) but NO
+# committee field; the Senate feed carries only the transaction date (no disclosure
+# date, no committees). The committee bonus is therefore dead against BOTH current
+# feeds — kept only for a future richer/paid source — so it is not counted as
+# structurally available here. Without normalization a Senate signal is capped at the
+# dollar weight alone (35) while House reaches 55, so even a huge, fresh Senate buy
+# could never clear the alert threshold. CHAMBER_MAX_BASE records what each chamber's
+# feed can structurally earn; scores are scaled to the common ceiling (the largest of
+# these) so a top-tier Senate buy competes with a top-tier House one. This invents no
+# disclosure timing or committee data — it only stops penalizing a chamber for fields
+# its free feed omits.
+CHAMBER_MAX_BASE = {
+    "House": POL_MAX_DOLLAR + POL_MAX_DISCLOSURE,   # 55
+    "Senate": POL_MAX_DOLLAR,                        # 35
+}
+POL_TARGET_BASE = max(CHAMBER_MAX_BASE.values())    # 55 — common ceiling
+
 
 # ------------------------------------------------------------------------
 # DATA MODEL
@@ -253,6 +277,25 @@ def _apply_recency(base_score: int, trade_date: str, filed_date: str, now,
     return max(0, min(round(base * factor), 100))
 
 
+def _normalize_chamber(base: int, chamber: str, reasons: list) -> int:
+    """
+    Scale a chamber's base score to the common ceiling POL_TARGET_BASE so chambers
+    whose free feed omits fields aren't permanently capped below richer ones. Senate
+    (dollar-only, ceiling 35) is scaled up toward 55; House (ceiling 55 == target) and
+    any unknown source are returned unchanged, so House scores never regress. The
+    result is capped at POL_TARGET_BASE so a normalized signal can't exceed the ceiling.
+    Does not fabricate disclosure/committee data — only removes the structural penalty.
+    """
+    ceiling = CHAMBER_MAX_BASE.get(chamber, POL_TARGET_BASE)
+    if ceiling >= POL_TARGET_BASE:
+        return base
+    factor = POL_TARGET_BASE / ceiling
+    scaled = min(round(base * factor), POL_TARGET_BASE)
+    if scaled != base:
+        reasons.append(f"{chamber} feed lacks disclosure data, normalized (x{factor:.2f})")
+    return scaled
+
+
 def score_insider(role: str, value_text: str, filed_date: str, trade_date: str,
                   now=None) -> tuple[int, str]:
     score = 0
@@ -296,7 +339,7 @@ def score_insider(role: str, value_text: str, filed_date: str, trade_date: str,
 
 
 def score_politician(person: str, committees: str, value_text: str, trade_date: str,
-                     filed_date: str, now=None) -> tuple[int, str]:
+                     filed_date: str, chamber: str = "", now=None) -> tuple[int, str]:
     score = 0
     reasons = []
 
@@ -347,6 +390,10 @@ def score_politician(person: str, committees: str, value_text: str, trade_date: 
     else:
         reasons.append("No disclosure date in feed (+0)")
 
+    # Level the playing field across chambers before recency (see CHAMBER_MAX_BASE):
+    # a Senate signal, which can only earn the dollar component, is scaled so a large
+    # fresh Senate buy is competitive with a large fresh House buy.
+    score = _normalize_chamber(score, chamber, reasons)
     score = _apply_recency(score, trade_date, filed_date, now, reasons)
     return score, "; ".join(reasons)
 
@@ -486,7 +533,8 @@ def fetch_congress_trades(url: str, chamber: str) -> list[Signal]:
 
         sig_id = f"CONGRESS-{chamber}-{person}-{ticker}-{trade_date}-{amount}"
 
-        score, reasons = score_politician(person, committees, amount, trade_date, filed_date)
+        score, reasons = score_politician(person, committees, amount, trade_date,
+                                          filed_date, chamber=chamber)
 
         signals.append(Signal(
             id=sig_id,

@@ -205,7 +205,24 @@ dollar-size weight + filing-speed bonus, then scaled by the recency multiplier.
 
 **Politician score** = disclosed dollar-range weight + committee/sector overlap
 bonus + disclosure-speed bonus (faster than the 45-day max = higher score), then
-scaled by the recency multiplier.
+normalized across chambers, then scaled by the recency multiplier.
+
+**Cross-chamber normalization.** The free House and Senate feeds don't carry the same
+fields, so raw scores aren't comparable. The House feed has transaction + disclosure
+dates (disclosure speed is scorable); the Senate feed has only the transaction date —
+no disclosure date. (Neither free feed currently carries committee data, so the
+committee bonus is inert against both and reserved for a future richer source.) A
+Senate signal could therefore only ever earn the dollar-size component, capping it far
+below House regardless of trade size. Each chamber's score is scaled to a common
+ceiling based on what its feed can structurally provide, so a large, fresh Senate buy
+competes with a large, fresh House one. House already spans the full range, so House
+scores are unchanged. This invents no disclosure or committee data — it only removes
+the structural penalty, and the scaling is shown in the `reasons` string.
+
+> **Senate data caveat:** the default Senate mirror stopped updating in late 2020, so
+> in practice every Senate trade is stale and suppressed by recency regardless of
+> normalization. Point `SENATE_TRADES_URL` at a maintained feed to get live Senate
+> signals.
 
 **Recency multiplier** (both sources) discounts the whole signal by how long ago the
 *trade* happened — for an alerting tool, last week's buy should outrank a 2022 one:

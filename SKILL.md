@@ -154,6 +154,13 @@ Edit `score_insider()` or `score_politician()` in `scanner.py`. Rules:
   multiplier keyed on **trade age** (≤30d ×1.00, 31–90d ×0.85, 91–180d ×0.60, >180d
   ×0.35). Keep recency (trade age) distinct from the disclosure-speed bonus (trade →
   public lag); they must not double-count.
+- **Cross-chamber normalization** (`_normalize_chamber()` / `CHAMBER_MAX_BASE`) scales
+  a chamber to a common ceiling so a source whose free feed omits fields isn't capped
+  below richer ones — the Senate feed has no disclosure date (and neither free feed has
+  committees, so that bonus is currently inert). Pass the real `chamber` to
+  `score_politician()`. Only mark a component structurally available if the feed
+  actually carries it — verify against the live feed, don't assume. Normalization
+  removes a structural penalty; it must never fabricate data the feed lacks.
 - Scoring must **never** use wall-clock `now` non-deterministically in a way tests
   can't pin — the score functions take an injectable `now=None`. Preserve that.
 - Scores are **frozen at first insert** (dedup never re-scores). Recency is computed
