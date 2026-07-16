@@ -250,12 +250,26 @@ function setBell(stateClass) {
   alertsBtn.title = stateClass === "on" ? "Alerts on — tap to turn off" : "Enable alerts";
 }
 
+// POST a subscription to the server. Idempotent server-side (INSERT OR REPLACE keyed
+// on endpoint), so it's safe to call on every load as well as on opt-in.
+const syncSubscription = (sub) =>
+  fetch("/api/push/subscribe", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sub),
+  });
+
 async function reflectPushState() {
   if (!pushSupported) { alertsBtn.hidden = true; return; }
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     setBell(sub ? "on" : null);
+    // Self-heal: the browser keeps its subscription across server restarts, but the
+    // server stores subscriptions in a DB that can be reset (e.g. a redeploy on an
+    // ephemeral disk). Without this, the bell shows "on" while the server no longer
+    // knows the endpoint, so no pushes arrive. Re-register any existing subscription
+    // on load so a wiped server table silently recovers. Fire-and-forget: a failed
+    // sync (offline, etc.) must not break the app, which works offline otherwise.
+    if (sub) syncSubscription(sub).catch(() => {});
   } catch { /* leave neutral */ }
 }
 
@@ -273,9 +287,7 @@ async function enableAlerts() {
     userVisibleOnly: true,
     applicationServerKey: urlB64ToUint8Array(info.public_key),
   });
-  await fetch("/api/push/subscribe", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sub),
-  });
+  await syncSubscription(sub);
   setBell("on");
   toast("Alerts on — you'll be pinged on new high-score signals");
 }
