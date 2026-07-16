@@ -209,6 +209,10 @@ the default so the project still runs with no key.
 - [ ] No text (code, docstring, alert, scoring reason, UI) claims politician trades
       are "real-time" or "live".
 - [ ] `python -m pytest tests/` passes (see Testing below).
+- [ ] If any `webapp/` shell asset changed (`app.js`, `index.html`, `styles.css`,
+      `manifest.webmanifest`, icons), **bump `SHELL_CACHE` in `webapp/sw.js`** — the
+      service worker is cache-first, so installed PWAs keep serving the old asset
+      until the cache name changes.
 
 ## Common pitfalls
 
@@ -225,6 +229,9 @@ the default so the project still runs with no key.
 - **Secrets in code or commit messages** — env vars only; scrub before committing.
 - **Date bugs** — feeds use `MM/DD/YYYY`; `datetime.fromisoformat()` throws on them.
   Always `normalize_date()` first. Watch tz-aware vs naive datetime subtraction.
+- **Stale PWA shell** — editing a `webapp/` shell asset without bumping `SHELL_CACHE`
+  in `sw.js` means installed phones keep running the old cached copy; the change never
+  reaches them. Bump the cache version whenever a shell asset changes.
 
 ## Testing strategy
 
