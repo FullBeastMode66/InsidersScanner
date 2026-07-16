@@ -177,28 +177,6 @@ def scan_status():
         return dict(_scan_state)
 
 
-@app.post("/api/admin/purge-stale-senate")
-def admin_purge_stale_senate(before: str = Query("2025-01-01")):
-    """TEMPORARY one-off maintenance: purge retired-mirror Senate rows from the live DB
-    (runs in this API process, which owns the same /data DB it serves). Returns counts
-    for verification. Removed after use."""
-    conn = sqlite3.connect(scanner.DB_PATH)
-    try:
-        matching = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE source='Congress (Senate)' "
-            "AND trade_date != '' AND trade_date < ?", (before,)
-        ).fetchone()[0]
-        total_senate = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE source='Congress (Senate)'"
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    purged = scanner.purge_stale_senate(before)
-    return {"db_path": str(scanner.DB_PATH), "before": before,
-            "matched_before_delete": matching, "total_senate_before": total_senate,
-            "purged": purged}
-
-
 # ------------------------------------------------------------------------
 # Web Push: the phone subscribes here so it can be alerted while closed
 # ------------------------------------------------------------------------
